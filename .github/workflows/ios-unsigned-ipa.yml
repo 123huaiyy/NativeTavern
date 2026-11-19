@@ -1,0 +1,59 @@
+name: NativeTavern iOS unsigned IPA
+
+on:
+  push:
+    branches:
+      - feat/ios-unsigned-ipa
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nativetavern-ios-unsigned-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-unsigned-ios:
+    name: Build unsigned IPA for personal signing
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - name: Checkout personal fork
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.16.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Check toolchain
+        run: |
+          flutter --version
+          xcodebuild -version
+          pod --version
+          bash --version | head -n 1
+
+      - name: Check iOS release project
+        run: CHECK_ONLY=true bash ./build_ios.sh
+
+      - name: Build and validate unsigned IPA
+        run: UNSIGNED_IPA=true bash ./build_ios.sh
+
+      - name: Generate IPA checksum
+        shell: bash
+        run: |
+          shasum -a 256 release/NativeTavern_v*_unsigned.ipa \
+            > release/NativeTavern_unsigned.sha256
+          ls -lh release/NativeTavern_v*_unsigned.ipa
+
+      - name: Upload unsigned iOS IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: NativeTavern_iOS_unsigned_IPA
+          path: |
+            release/NativeTavern_v*_unsigned.ipa
+            release/NativeTavern_unsigned.sha256
+          if-no-files-found: error
+          retention-days: 14
