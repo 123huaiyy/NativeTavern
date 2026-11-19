@@ -36,6 +36,20 @@ jobs:
           pod --version
           bash --version | head -n 1
 
+      - name: Restore missing standard Flutter iOS scaffolding
+        run: |
+          # Upstream commits only selected files under ios/; fill out missing
+          # generated host assets without overwriting the custom Runner files.
+          flutter create --platforms=ios --project-name native_tavern .
+
+      - name: Generate iOS app icon from the repository icon
+        run: |
+          mkdir -p ios/Runner/Assets.xcassets/AppIcon.appiconset
+          sips -s format png -z 1024 1024 icon.png \
+            --out ios/Runner/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          test -s ios/Runner/Assets.xcassets/AppIcon.appiconset/AppIcon.png
+          test -s ios/Runner.xcodeproj/xcshareddata/xcschemes/Runner.xcscheme
+
       - name: Check iOS release project
         run: CHECK_ONLY=true bash ./build_ios.sh
 
