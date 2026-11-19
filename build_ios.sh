@@ -214,6 +214,19 @@ if [[ "$UNSIGNED_IPA" == 'true' ]]; then
   [[ -d "$UNSIGNED_APP" ]] \
     || fail "Unsigned iOS build did not produce Runner.app"
 
+  # Flutter can migrate SPM references and its Podfile during a fresh
+  # first-time iOS build. Permit generated Xcode configuration changes while
+  # preserving the application code and verifying the iOS project invariants.
+  if ! git diff --quiet -- "$APP_DELEGATE" "$INFO_PLIST"; then
+    fail "Flutter build changed native application source or Info.plist"
+  fi
+  if ! git diff --quiet -- "$PODFILE" "$PBXPROJ" "$PODFILE_LOCK"; then
+    printf '%s\n' 'Flutter updated generated iOS project configuration:'
+    git diff --stat -- "$PODFILE" "$PBXPROJ" "$PODFILE_LOCK"
+  fi
+  validate_source_project
+  IOS_SOURCE_SNAPSHOT="$(snapshot_critical_ios_files)"
+
   # Still verify the real iOS binary, Live2D and Spine symbols.
   # The sole validation intentionally skipped is Apple code signing.
   validate_app_bundle "$UNSIGNED_APP" true
