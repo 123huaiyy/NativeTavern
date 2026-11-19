@@ -192,6 +192,18 @@ if [[ "$UNSIGNED_IPA" == 'true' ]]; then
   fi
   popd >/dev/null
 
+  # Newer CocoaPods on GitHub runners can rewrite Podfile.lock with a
+  # generated checksum/version even when the checked-in source is unchanged.
+  # Do not weaken the guard for Swift, plist, Podfile or Xcode project files.
+  if ! git diff --quiet -- "$APP_DELEGATE" "$INFO_PLIST" "$PODFILE" "$PBXPROJ"; then
+    git diff --stat -- "$APP_DELEGATE" "$INFO_PLIST" "$PODFILE" "$PBXPROJ"
+    fail "CocoaPods modified protected iOS source files"
+  fi
+  if ! git diff --quiet -- "$PODFILE_LOCK"; then
+    printf '%s\n' 'CocoaPods regenerated Podfile.lock; checking this new lockfile for subsequent build changes.'
+    git diff --stat -- "$PODFILE_LOCK"
+  fi
+  IOS_SOURCE_SNAPSHOT="$(snapshot_critical_ios_files)"
   assert_critical_ios_files_unchanged
 
   flutter build ios --release --no-codesign \
