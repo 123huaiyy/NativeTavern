@@ -3,6 +3,7 @@ name: NativeTavern iOS unsigned IPA
 on:
   push:
     branches:
+      - main
       - feat/ios-unsigned-ipa
   workflow_dispatch:
 
