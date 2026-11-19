@@ -12,6 +12,8 @@ BUILD_FOR_DEVICE="${BUILD_FOR_DEVICE:-false}"
 DEVICE_ID="${DEVICE_ID:-}"
 POD_REPO_UPDATE="${POD_REPO_UPDATE:-false}"
 CHECK_ONLY="${CHECK_ONLY:-false}"
+# Personal sideloading: package an unsigned IPA without an Apple team/profile.
+UNSIGNED_IPA="${UNSIGNED_IPA:-false}"
 
 APP_DELEGATE="ios/Runner/AppDelegate.swift"
 INFO_PLIST="ios/Runner/Info.plist"
@@ -95,6 +97,7 @@ assert_critical_ios_files_unchanged() {
 
 validate_app_bundle() {
   local app_path="$1"
+  local skip_signature_check="${2:-false}"
   local executable bundle_id version build minimum_os
 
   require_file "$app_path/Info.plist"
@@ -128,7 +131,9 @@ validate_app_bundle() {
     | grep -F 'com.nativetavern/live2d_render_scale' >/dev/null \
     || fail "Built Dart binary is missing the Live2D render-scale channel"
 
-  codesign --verify --deep --strict "$app_path"
+  if [[ "$skip_signature_check" != 'true' ]]; then
+    codesign --verify --deep --strict "$app_path"
+  fi
   printf 'Validated app: %s %s (%s), iOS %s+\n' \
     "$bundle_id" "$version" "$build" "$minimum_os"
 }
@@ -143,7 +148,7 @@ validate_ipa() {
   unzip -q "$ipa_path" -d "$inspect_dir"
   app_path="$(find "$inspect_dir/Payload" -maxdepth 1 -type d -name '*.app' -print -quit)"
   [[ -n "$app_path" ]] || fail "IPA does not contain an application bundle"
-  validate_app_bundle "$app_path"
+  validate_app_bundle "$app_path" "${2:-false}"
 }
 
 for command_name in git flutter pod xcodebuild plutil unzip strings nm codesign shasum; do
@@ -162,6 +167,67 @@ IOS_SOURCE_SNAPSHOT="$(snapshot_critical_ios_files)"
 
 if [[ "$CHECK_ONLY" == 'true' ]]; then
   printf 'Preflight passed for NativeTavern %s.\n' "$VERSION"
+  exit 0
+fi
+
+# Community sideload artifact, not an App Store/TestFlight release.
+# Use the same checked-in build script and validate the resulting app, but
+# deliberately do not require the upstream developer team or signing secrets.
+if [[ "$UNSIGNED_IPA" == 'true' ]]; then
+  printf '=== Building unsigned iOS IPA for personal signing: %s ===\n' "$VERSION"
+  TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/nativetavern-ios-unsigned.XXXXXX")"
+  cleanup() {
+    rm -rf -- "$TEMP_DIR"
+  }
+  trap cleanup EXIT
+
+  flutter clean
+  flutter pub get
+
+  pushd ios >/dev/null
+  if [[ "$POD_REPO_UPDATE" == 'true' ]]; then
+    pod install --repo-update
+  else
+    pod install
+  fi
+  popd >/dev/null
+
+  assert_critical_ios_files_unchanged
+
+  flutter build ios --release --no-codesign \
+    --build-name="$BUILD_NAME" \
+    --build-number="$BUILD_NUMBER"
+
+  UNSIGNED_APP="$REPO_ROOT/build/ios/iphoneos/Runner.app"
+  [[ -d "$UNSIGNED_APP" ]] \
+    || fail "Unsigned iOS build did not produce Runner.app"
+
+  # Still verify the real iOS binary, Live2D and Spine symbols.
+  # The sole validation intentionally skipped is Apple code signing.
+  validate_app_bundle "$UNSIGNED_APP" true
+  assert_critical_ios_files_unchanged
+
+  FINAL_UNSIGNED_IPA="$REPO_ROOT/release/NativeTavern_v${VERSION}_unsigned.ipa"
+  [[ ! -e "$FINAL_UNSIGNED_IPA" ]] \
+    || fail "Unsigned artifact already exists: $FINAL_UNSIGNED_IPA"
+
+  mkdir -p "$REPO_ROOT/release" "$TEMP_DIR/Payload"
+  ditto "$UNSIGNED_APP" "$TEMP_DIR/Payload/Runner.app"
+  (
+    cd "$TEMP_DIR"
+    zip -qry "$FINAL_UNSIGNED_IPA" Payload
+  )
+
+  unzip -tqq "$FINAL_UNSIGNED_IPA" \
+    || fail "Unsigned IPA ZIP failed integrity validation"
+  validate_ipa "$FINAL_UNSIGNED_IPA" true
+  assert_critical_ios_files_unchanged
+
+  printf '%s\n' '=== iOS unsigned build complete ==='
+  printf 'IPA: %s\n' "$FINAL_UNSIGNED_IPA"
+  printf 'SHA-256: '
+  shasum -a 256 "$FINAL_UNSIGNED_IPA" | awk '{ print $1 }'
+  printf '%s\n' 'This IPA is NOT signed. Install only after signing with your own certificate.'
   exit 0
 fi
 
